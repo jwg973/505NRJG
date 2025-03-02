@@ -1,0 +1,92 @@
+---
+title: "Model 1"
+author: "Nicole Rodgers & Jon Garrow"
+date: "3/10/2025"
+
+---
+```email
+format: 
+  html:
+    embed-resources: true
+```
+**Abstract:**
+
+> Purpose of this document is to demonstrate creating an ML model to predict the province of a wine based on the data available in the dataset of wine reviews.
+
+# 1. Setup
+
+**Set Up Code:**
+
+```{r}
+sh <- suppressPackageStartupMessages
+sh(library(tidyverse))
+sh(library(caret))
+sh(library(fastDummies))
+sh(library(class))
+sh(library(tidytext))
+sh(library(dplyr))
+wine <- readRDS(gzcon(url("https://github.com/cd-public/D505/raw/master/dat/model.rds")))
+```
+
+# 2. Engineer Features
+
+```{r}
+#wine <- wine %>% mutate(points_per_price = points/price) # Prof. Deutschbein indicated this is not a very useful feature, so consider this a placeholder?
+
+# Filter for rows with the province of Marlborough
+marlborough_wines <- wine %>% filter(province == "Marlborough")
+
+# Tokenize the descriptions
+marlborough_words <- marlborough_wines %>%
+  unnest_tokens(word, description)
+
+# Remove stop words
+marlborough_words <- marlborough_words %>%
+  anti_join(stop_words)
+
+# Count the frequency of each word
+word_counts <- marlborough_words %>%
+  count(word, sort = TRUE)
+
+# Print the top 10 most frequent words
+print(word_counts %>% head(10))
+
+summary(wine)
+ wine <- wine %>% mutate(fct_year = factor(year)) %>%
+  mutate(description = tolower(description)) %>%
+mutate(cherry = str_detect(description, "cherry"),
+         chocolate = str_detect(description, "chocolate"),
+         earth = str_detect(description, "earth")) %>%
+  mutate(cherry_year = year*cherry,
+         chocolate_year = year*chocolate,
+         earth_year = year*earth) %>%
+  select(-description)
+```
+
+> We have to use K-NN or Naive Bayes for this, and Prof. Deutschbein indicated that K-NN is superior in most cases - or at least more commonly used. Log price and points? Box-Cox?
+
+# 3. Pre-Processing
+```{r}
+wine <- wine %>%
+  preProcess(method = c("BoxCox", "center", "scale")) %>%
+  predict(wine) %>%
+  dummy_cols(select_columns = "fct_year",
+             remove_most_frequent_dummy = TRUE,
+             remove_selected_columns = TRUE)
+```
+
+# 4. Modeling
+
+
+```{r}
+split <- createDataPartition(wine$province, p = 0.8, list = FALSE)
+train <- wine[split, ]
+test <- wine[-split, ]
+fit <- train(province ~ .,
+             data = train, 
+             method = "knn",
+             tuneLength = 15,
+             metric = "Kappa",
+             trControl = trainControl(method = "cv", number = 5))
+confusionMatrix(predict(fit, test),factor(test$province))
+```
