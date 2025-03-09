@@ -1,0 +1,156 @@
+---
+title: "Model 1"
+author: "Jon Garrow and Nicole Rodgers"
+date: "03/10/2025"
+editor: visual
+
+format: 
+  html:
+    theme: minty  
+    mainfont: monospace
+    highlight-style: github
+    title-block-banner: true
+    embed-resources: true
+---
+
+## Setup
+
+```{r}
+sh <- suppressPackageStartupMessages
+sh(library(fastDummies))
+sh(library(caret))
+sh(library(moderndive))
+sh(library(class))
+sh(library(tidyverse))
+sh(library(caret))
+sh(library(tidytext))
+sh(library(SnowballC))
+data(stop_words)
+```
+
+## Dataframe
+
+```{r}
+wine <- readRDS(gzcon(url("https://github.com/cd-public/D505/raw/master/dat/model.rds"))) %>%
+  rowid_to_column(var = "ID")
+```
+
+## Feature Engineering
+We generate a list of key words by narrowing down the two most frequently used words in each province that were not used in more than two other provinces. We then add three more geographic terms based on knowledge of wine and wine reviews, as well as map consultation.
+
+```{r}
+# Removing overly common words
+df <- wine %>%
+  unnest_tokens(word, description) %>%
+  anti_join(stop_words) %>%
+  filter(!str_detect(word, "wine")) %>%
+  filter(!str_detect(word, "pinot")) %>%
+  filter(!str_detect(word, "bottl")) %>%
+  filter(!str_detect(word, "vine")) %>%
+  ungroup()
+
+# Extracting stem words
+df <- df %>%
+  mutate(word = as.character(word)) %>%
+  rename(words = word) %>%
+  mutate(words = wordStem(words))
+
+# Removing an overly common stem word and filtering for high frequency words used more than ten times in each province
+narrow <- df %>%
+  filter(words != "ag") %>%
+  group_by(province, words) %>%
+  summarise(in_province = n()) %>%
+  arrange(desc(in_province)) %>%
+  mutate(freq_province = in_province/sum(in_province)) %>%
+  arrange(province, desc(freq_province)) %>%
+  group_by(province) %>%
+  top_frac(0.05, freq_province) %>%
+  filter(in_province >= 10)
+
+# Filtering for words used in no more than 3 provinces
+hi_freq <- narrow %>%
+  select(province, words) %>%
+  distinct() %>%
+  group_by(words) %>%
+  summarise(used = n()) %>%
+  arrange(desc(used)) %>%
+  filter(used <= 3)%>%
+  arrange(words)
+
+# Generating our twelve "Key Words" that are the top two distinctive words used in each region  
+key_words <- narrow %>%
+  left_join(hi_freq,
+            by = NULL) %>%
+  drop_na() %>%
+  top_frac(0.2, freq_province) %>%
+  group_by(province) %>%
+  top_n(2, in_province) %>%
+  arrange(words) %>%
+  ungroup() %>%
+  arrange(province)
+
+key_words
+
+# Combining our Key Words and our chosen geographic terms with the 'wine' dataset
+wino <- wine %>%
+  mutate(
+    rich = as.numeric(str_detect(description, "rich")),
+    structur = as.numeric(str_detect(description, "structur")),
+    cranberri = as.numeric(str_detect(description, "cranberri")),
+    nose = as.numeric(str_detect(description, "nose")),
+    feel = as.numeric(str_detect(description, "feel")),
+    herbal = as.numeric(str_detect(description, "herbal")),
+    medium = as.numeric(str_detect(description, "medium")),
+    silki = as.numeric(str_detect(description, "silki")),
+    delic = as.numeric(str_detect(description, "delic")),
+    tone = as.numeric(str_detect(description, "tone")),
+    chocol = as.numeric(str_detect(description, "chocol")),
+    tart = as.numeric(str_detect(description, "tart")),
+    erie = as.numeric(str_detect(description, "erie")),
+    awatere = as.numeric(str_detect(description, "awatere")),
+    tart = as.numeric(str_detect(description, "tart")),
+    sus_french = as.numeric(str_detect(description, "chateau") |
+           str_detect(description, "domaine") |
+           str_detect(description, "france"))
+    ) %>%
+  select(-description)
+```
+
+## Modeling
+We initially used $K$NN to develop our model, but found that Naive Bayes performed slightly better with numeric variables.
+
+```{r}
+set.seed(505)
+wine_index <-
+  createDataPartition(wino$province,
+                      p = 0.8,
+                      list = FALSE)
+wheels <- wino[ wine_index, ]
+subjects <- wino[-wine_index, ]
+
+fit_knn <- train(province ~ .,
+             data = wheels, 
+             method = "knn",
+             tuneLength = 15,
+             metric = "Kappa",
+             trControl = trainControl(method = "cv", number = 5))
+
+fit_nb <- train(province ~ .,
+             data = wheels, 
+             method = "naive_bayes",
+             metric = "Kappa",
+             trControl = trainControl(method = "cv"))
+```
+
+## Results
+By combining techniques, engineering variables, and switching from $K$NN to Naive Bayes, we tuned our model from .19 to Kappa values over .4
+
+### $K$NN
+```{r}
+confusionMatrix(predict(fit_knn, subjects),factor(subjects$province))$overall['Kappa']
+```
+
+### Naive Bayes
+```{r}
+confusionMatrix(predict(fit_nb, subjects),factor(subjects$province))$overall['Kappa']
+```
