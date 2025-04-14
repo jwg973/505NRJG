@@ -1,0 +1,157 @@
+---
+title: "Model 2"
+author: "Jon Garrow and Nicole Rodgers"
+date: "04/14/2025"
+editor: visual
+
+format: 
+  html:
+    theme: minty  
+    mainfont: monospace
+    highlight-style: github
+    title-block-banner: true
+    embed-resources: true
+---
+
+## Setup
+
+```{r}
+sh <- suppressPackageStartupMessages
+sh(library(tidyverse))
+sh(library(caret))
+sh(library(naivebayes))
+```
+
+## Dataframe
+
+```{r}
+bank <- readRDS(gzcon(url("https://cd-public.github.io/D505/dat/BankChurners.rds")))
+```
+
+## Feature Engineering
+
+```{r}
+names(bank)
+unique(bank$Education_Level)
+unique(bank$Marital_Status)
+unique(bank$Income_Category)
+unique(bank$Card_Category)
+
+ds_bank <- bank %>%
+  mutate(ed_fctr =
+    case_when(
+      str_detect(Education_Level, "Unknown") ~ 0,
+      str_detect(Education_Level, "Uneducated") ~ 1,
+      str_detect(Education_Level, "High School") ~ 2,
+      str_detect(Education_Level, "College") ~ 3,
+      str_detect(Education_Level, "Graduate") ~ 4,
+      str_detect(Education_Level, "Post-Graduate") ~ 5,
+      str_detect(Education_Level, "Doctorate") ~ 6,
+      .default = 999
+    )
+  ) %>%
+  mutate(
+    mar_fctr =
+      case_when(
+      str_detect(Marital_Status, "Unknown") ~ 0,
+      str_detect(Marital_Status, "Single") ~ 1,
+      str_detect(Marital_Status, "Married") ~ 2,
+      str_detect(Marital_Status, "Divorced") ~ 3,
+      .default = 999
+     )) %>%
+  mutate(Churn =
+    case_when(
+      str_detect(Churn, "yes") ~ 1,
+                 .default = 0)
+    ) %>%
+  mutate(
+    inc_fctr =
+      case_when(
+        str_detect(Income_Category, "Unknown") ~ 0,
+        str_detect(Income_Category, "Less than") ~ 1,
+        str_detect(Income_Category, "40K - ") ~ 2,
+        str_detect(Income_Category, "60K - ") ~ 3,
+        str_detect(Income_Category, "80K - ") ~ 4,
+        str_detect(Income_Category, "120K +") ~ 5,
+        .default = 999
+      ) 
+  ) %>%
+  mutate(
+    card_fctr =
+      case_when(
+        str_detect(Card_Category, "Blue") ~ 1,
+        str_detect(Card_Category, "Silver") ~ 2,
+        str_detect(Card_Category, "Gold") ~ 3,
+        str_detect(Card_Category, "Platinum") ~ 4,
+        .default = 999
+      )
+  ) %>%
+  mutate(
+    gen_fctr =
+      case_when(
+        str_detect(Gender, "F") ~ 1,
+        str_detect(Gender, "M") ~ 2,
+        .default = 999
+      )
+  ) %>%
+  select(-Gender, -Education_Level, -Marital_Status, -Income_Category, -Card_Category) %>%
+  mutate(inact_ratio = Months_Inactive_12_mon/Months_on_book) %>%
+  mutate(high_activity = case_when(
+    Total_Trans_Ct > 45 ~ 1,
+    .default = 0
+  )) %>%
+  mutate(active_per_mo = Contacts_Count_12_mon/12) %>%
+  mutate(act_chng_per_mo = Total_Ct_Chng_Q4_Q1/12) %>%
+  mutate(amt_per_trans = Total_Trans_Amt/Total_Trans_Ct ) %>%
+  mutate(more_rels = case_when(
+    Total_Relationship_Count >= 4 ~ 1,
+    .default = 0
+  )) %>%
+  mutate(balance_per_trans = Total_Revolving_Bal/Total_Trans_Amt)
+
+str(ds_bank)
+
+model <- train(Churn ~ ., data = ds_bank,
+               method = "lm",
+               trControl = trainControl(
+                 method = "boot",
+                 number = 5))
+plot(varImp(model))
+
+bank <- ds_bank %>%
+  select(act_chng_per_mo, high_activity, amt_per_trans, balance_per_trans, inact_ratio, Churn) %>%
+  mutate(Churn = as.factor(Churn))
+```
+
+## Predicting Churn
+
+```{r}
+fit_knn <- train(Churn ~ .,
+             data = bank, 
+             method = "knn",
+             tuneLength = 5,
+             trControl = trainControl(method = "cv", number = 5))
+
+fit_nb <- train(Churn ~ .,
+             data = bank, 
+             method = "naive_bayes",
+             metric = "Kappa",
+             trControl = trainControl(method = "cv"))
+
+confusionMatrix(predict(fit_knn, bank),factor(bank$Churn))
+
+confusionMatrix(predict(fit_nb, bank),factor(bank$Churn))
+```
+
+## Assessment and Results
+
+```{r}
+train(Churn ~ .,
+      data = bank |> select(1,2,3,4,5,grep("Churn", colnames(bank))), 
+      trControl = trainControl(method = "cv", number = 5),
+      method = "glm",
+      family = "binomial",
+      maxit = 5)$results['Kappa']
+
+write_rds(bank, file="jgnr_model_2.rds")
+```
